@@ -1,108 +1,87 @@
 import { Page, Locator, expect } from '@playwright/test';
 
 /**
- * Page Object for /config/guardrails — Automation Audit rule builder.
+ * Page Object for Config > Automation > Guardrails > Automation Audit
+ * (https://guardio.app.getnotch.dev/config/guardrails?version=...)
  *
- * IMPORTANT: I don't have access to the real staging environment, so every selector
- * below is a placeholder guess at what a data-testid convention would look like.
- * Each is flagged `// ASSUMED SELECTOR`. Once you share the real markup (or I get
- * access), swap these one-for-one and every spec file keeps working unchanged —
- * that's the point of isolating them here instead of inlining selectors in tests.
+ * Grounded in a real screenshot of the page (see TEST_PLAN.md section 0), so field
+ * labels, the Deploy button text, and the confirmed placeholder ("Add a word (e.g.,
+ * 'paperwork') and press Enter") are exact, not guessed.
+ *
+ * What's still a guess: the DOM *nesting* — which element wraps a field's heading,
+ * chip list, and input together. A screenshot shows layout, not markup, so
+ * `.filter({ hasText })` is used as a best-effort way to scope to the right section.
+ * This is flagged `// ASSUMED DOM STRUCTURE` — swap for a real container selector
+ * (ideally a data-testid the product could add per field) once available.
  */
+export const FIELD_LABELS = {
+  emailPatterns: 'Emails patterns to unassign',
+  subjects: 'Subjects',
+  userMessageWords: 'Words in User Message',
+  assistantReplyWords: "Words in Assistant's Reply",
+} as const;
+
+export type FieldKey = keyof typeof FIELD_LABELS;
+
 export class GuardrailsPage {
   readonly page: Page;
-
-  // --- Navigation / list view ---
-  readonly newRuleButton: Locator;
-  readonly ruleRows: Locator;
-
-  // --- Rule form fields ---
-  readonly ruleNameInput: Locator;
-  readonly emailPatternInput: Locator;
-  readonly addEmailPatternButton: Locator;
-  readonly subjectInput: Locator;
-  readonly userMessageWordsInput: Locator;
-  readonly assistantReplyWordsInput: Locator;
-  readonly enabledToggle: Locator;
-  readonly saveButton: Locator;
-  readonly deleteButton: Locator;
-  readonly confirmDeleteButton: Locator;
-
-  // --- Feedback ---
-  readonly validationError: Locator;
-  readonly successToast: Locator;
+  readonly deployButton: Locator;
+  readonly draftBadge: Locator;
+  readonly versionMenuButton: Locator;
 
   constructor(page: Page) {
     this.page = page;
-
-    this.newRuleButton = page.getByTestId('guardrail-new-rule-button'); // ASSUMED SELECTOR
-    this.ruleRows = page.getByTestId('guardrail-rule-row'); // ASSUMED SELECTOR
-
-    this.ruleNameInput = page.getByTestId('guardrail-rule-name-input'); // ASSUMED SELECTOR
-    this.emailPatternInput = page.getByTestId('guardrail-email-pattern-input'); // ASSUMED SELECTOR
-    this.addEmailPatternButton = page.getByTestId('guardrail-add-email-pattern'); // ASSUMED SELECTOR
-    this.subjectInput = page.getByTestId('guardrail-subject-input'); // ASSUMED SELECTOR
-    this.userMessageWordsInput = page.getByTestId('guardrail-user-message-words-input'); // ASSUMED SELECTOR
-    this.assistantReplyWordsInput = page.getByTestId('guardrail-assistant-reply-words-input'); // ASSUMED SELECTOR
-    this.enabledToggle = page.getByTestId('guardrail-enabled-toggle'); // ASSUMED SELECTOR
-    this.saveButton = page.getByTestId('guardrail-save-button'); // ASSUMED SELECTOR
-    this.deleteButton = page.getByTestId('guardrail-delete-button'); // ASSUMED SELECTOR
-    this.confirmDeleteButton = page.getByTestId('guardrail-confirm-delete-button'); // ASSUMED SELECTOR
-
-    this.validationError = page.getByTestId('guardrail-validation-error'); // ASSUMED SELECTOR
-    this.successToast = page.getByTestId('toast-success'); // ASSUMED SELECTOR
+    this.deployButton = page.getByRole('button', { name: 'Deploy' });
+    this.draftBadge = page.getByText('Draft', { exact: true });
+    this.versionMenuButton = page.getByRole('button', { name: '⋮' }); // ASSUMED SELECTOR — accessible name of the "..." menu is unconfirmed
   }
 
-  async goto() {
-    await this.page.goto('/config/guardrails');
+  async goto(version?: string) {
+    const url = version ? `/config/guardrails?version=${version}` : '/config/guardrails';
+    await this.page.goto(url);
   }
 
-  async openNewRuleForm() {
-    await this.newRuleButton.click();
+  /**
+   * Locates the card/section for a given field by its heading text.
+   * ASSUMED DOM STRUCTURE: assumes each field's heading, description, chip list and
+   * input all live inside one common ancestor block that `hasText` filtering can find.
+   * If the real layout nests things differently this is the one place to fix it.
+   */
+  private section(field: FieldKey): Locator {
+    const label = FIELD_LABELS[field];
+    return this.page.locator('div').filter({ hasText: label }).last();
   }
 
-  async fillRuleName(name: string) {
-    await this.ruleNameInput.fill(name);
+  private input(field: FieldKey): Locator {
+    // Confirmed placeholder pattern from the "Words in Assistant's Reply" field in the
+    // screenshot: "Add a word (e.g., 'paperwork') and press Enter". Other fields'
+    // placeholders weren't visible (their inputs were below existing chips, out of
+    // frame) so this regex is deliberately loose to match all four once implemented.
+    return this.section(field).getByPlaceholder(/press Enter/i);
   }
 
-  async addEmailPattern(pattern: string) {
-    await this.emailPatternInput.fill(pattern);
-    await this.addEmailPatternButton.click();
+  async addChip(field: FieldKey, value: string) {
+    const input = this.input(field);
+    await input.fill(value);
+    await input.press('Enter');
   }
 
-  async fillSubject(subject: string) {
-    await this.subjectInput.fill(subject);
+  async removeChip(field: FieldKey, value: string) {
+    const chip = this.section(field).getByText(value, { exact: true });
+    // ASSUMED SELECTOR: the remove "x" is assumed to be the next sibling element of
+    // the chip's text node. Confirm against real markup.
+    await chip.locator('xpath=following-sibling::*[1]').click();
   }
 
-  async addUserMessageWords(csv: string) {
-    // Assumed UI accepts comma-separated bulk entry — adjust if it's one-word-at-a-time chips.
-    await this.userMessageWordsInput.fill(csv);
+  async expectChipPresent(field: FieldKey, value: string) {
+    await expect(this.section(field).getByText(value, { exact: true })).toBeVisible();
   }
 
-  async addAssistantReplyWords(csv: string) {
-    await this.assistantReplyWordsInput.fill(csv);
+  async expectChipAbsent(field: FieldKey, value: string) {
+    await expect(this.section(field).getByText(value, { exact: true })).toHaveCount(0);
   }
 
-  async save() {
-    await this.saveButton.click();
-  }
-
-  async expectValidationError(messageSubstring: string) {
-    await expect(this.validationError).toBeVisible();
-    await expect(this.validationError).toContainText(messageSubstring);
-  }
-
-  async expectSaveSucceeded() {
-    await expect(this.successToast).toBeVisible();
-  }
-
-  async ruleRowByName(name: string): Promise<Locator> {
-    return this.ruleRows.filter({ hasText: name });
-  }
-
-  async deleteRuleByName(name: string) {
-    const row = await this.ruleRowByName(name);
-    await row.getByTestId('guardrail-delete-button').click(); // ASSUMED SELECTOR
-    await this.confirmDeleteButton.click();
+  async deploy() {
+    await this.deployButton.click();
   }
 }

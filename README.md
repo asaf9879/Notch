@@ -10,14 +10,21 @@ assignment ("you do not need to implement all test cases").
 
 ## Status / honesty note
 
-I did not have access to the live staging environment or the walkthrough video when building this, so:
-- The test plan is built from the scope description alone. Assumptions are marked **[ASSUMPTION]** in
-  `TEST_PLAN.md` — please correct me on any of these.
-- Selectors in `tests/pages/GuardrailsPage.ts` are placeholders, each flagged `// ASSUMED SELECTOR`.
-  Point me at the real markup and they take five minutes to fix.
-- A few specs under `composite-rules.spec.ts` are intentionally `test.skip`'d — they need a live
-  automation pipeline to fire messages through, which isn't available from a static review. The
-  assertion logic and rationale are written inline, ready to un-skip.
+I didn't have access to the live staging environment or the walkthrough video, but I was given a real
+screenshot of the page, which is what this plan and suite are grounded in (see `TEST_PLAN.md` section 0
+for exactly what that screenshot confirmed vs. what's still open). Two rounds of correction happened here
+worth knowing about going into the interview:
+
+- **My first draft assumed** a multi-rule builder with AND-logic across fields and email-format
+  validation. **The screenshot overturned all three**: it's a single versioned Draft/Deploy config, each
+  field is an independent OR condition, and there's no email-format validation (proven by real saved
+  values like `noreply` sitting in the "email patterns" field).
+- Field labels, the Deploy button, and the chip-input placeholder text in
+  `tests/pages/GuardrailsPage.ts` are exact, taken from the screenshot. What's still guessed is DOM
+  *nesting* (a screenshot shows layout, not markup) — each such guess is flagged
+  `// ASSUMED DOM STRUCTURE`. Real HTML for one field would let me lock in the rest.
+- Tests requiring a live conversation pipeline (does a match actually trigger unassignment?) are
+  `test.skip`'d in `logic-and-lifecycle.spec.ts`, with the plan and rationale written inline.
 
 ## Setup
 
@@ -44,12 +51,13 @@ Auth: none is wired up yet since I don't know the login flow for the environment
 TEST_PLAN.md                        full test suite design (start here)
 playwright.config.ts
 tests/
-  pages/GuardrailsPage.ts           Page Object — all selectors isolated here
+  pages/GuardrailsPage.ts           Page Object — grounded in the real screenshot
+  chip-mechanics.spec.ts            CHIP-* cases, parametrized across all 4 fields
   email-patterns.spec.ts            EP-* cases
-  subject.spec.ts                   SU-* cases
+  subjects.spec.ts                  SU-* cases
   user-message-words.spec.ts        UM-* cases
   assistant-reply-words.spec.ts     AR-* cases
-  composite-rules.spec.ts           C-COMPOSITE-*, CRUD, skipped matching-logic cases
+  logic-and-lifecycle.spec.ts       C-LOGIC-*, DD-*, skipped live-pipeline cases
 ```
 
 ## Pushing to your own remote

@@ -1,38 +1,25 @@
-import { test, expect } from '@playwright/test';
+import { test } from '@playwright/test';
 import { GuardrailsPage } from './pages/GuardrailsPage';
 
-// Covers TEST_PLAN.md section 2.3 — Words in user message
+// Covers TEST_PLAN.md section 3.3 — Words in User Message
 
-test.describe('Guardrail rule — Words in user message field', () => {
+test.describe('Words in User Message', () => {
   let guardrails: GuardrailsPage;
 
   test.beforeEach(async ({ page }) => {
     guardrails = new GuardrailsPage(page);
     await guardrails.goto();
-    await guardrails.openNewRuleForm();
   });
 
-  test('UM-01 — single keyword is accepted and saved', async () => {
-    await guardrails.fillRuleName('UM-01 single keyword');
-    await guardrails.addUserMessageWords('refund');
-    await guardrails.save();
-    await guardrails.expectSaveSucceeded();
+  test('UM-01 — a word is accepted and saved as a chip', async () => {
+    const value = `qa-word-${Date.now()}`;
+    await guardrails.addChip('userMessageWords', value);
+    await guardrails.expectChipPresent('userMessageWords', value);
   });
 
-  test('UM-06 — bulk-paste of a comma-separated word list is accepted', async () => {
-    await guardrails.fillRuleName('UM-06 bulk word list');
-    await guardrails.addUserMessageWords('refund, chargeback, dispute, cancel subscription');
-    await guardrails.save();
-    await guardrails.expectSaveSucceeded();
-  });
-
-  test('UM-08 — empty word list does not block saving a rule using only other fields', async () => {
-    await guardrails.fillRuleName('UM-08 empty word list');
-    await guardrails.fillSubject('Billing question');
-    await guardrails.save();
-    await guardrails.expectSaveSucceeded();
-  });
-
-  // UM-03 (word-boundary correctness) and UM-04/05 (case-insensitivity, punctuation) require
-  // firing a real message through the matching engine — see matching-logic.spec.ts.
+  // UM-02 (does "cat" incorrectly match inside "category"?) is the single highest-value
+  // test in this whole suite, precisely because the confirmed "contains" semantics make
+  // it a real, likely bug rather than a hypothetical edge case. It requires a live
+  // conversation to fire a real user message through — see
+  // logic-and-lifecycle.spec.ts's skipped block, test 'UM-02'.
 });

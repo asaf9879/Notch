@@ -5,29 +5,61 @@
 
 ---
 
-## 0. How this plan was built — access limitations & assumptions
+## 0. How this plan was built — access limitations, then a real screenshot
 
-I could not open the linked Google Drive video or the `guardio.app.getnotch.dev` staging URL (auth-gated, private
-environment, no network egress from where this was authored). Everything below is inferred from the scope text and
-general knowledge of how rule/guardrail builders in this space work. Assumptions that materially affect the plan are
-marked **[ASSUMPTION]** so they're easy to find and correct.
+I could not open the linked Google Drive video or reach the `guardio.app.getnotch.dev` staging URL directly (auth-gated,
+private environment). The first draft of this plan was built from the scope text alone and got some real structure
+wrong. I was then given a screenshot of the actual page, which corrected the design. What follows reflects the
+screenshot; anything still unconfirmed is marked **[OPEN QUESTION]**.
 
-**[ASSUMPTION]** The feature lets an admin define one or more **Automation Audit rules**. Each rule has some
-combination of:
-- **Email patterns** — matches against the sender/recipient email of an automation (exact, wildcard, or regex)
-- **Subject** — matches against an email/automation subject line
-- **Words in user message** — a keyword/phrase list matched against the inbound user message the automation is
-  reacting to
-- **Words in assistant's reply** — a keyword/phrase list matched against the AI-generated reply
+### Confirmed from the screenshot
 
-**[ASSUMPTION]** A rule fires (gets flagged/audited/blocked — exact action unknown) when its configured fields match,
-and multiple fields on one rule combine with **AND** logic, while multiple values within one field (e.g. two words in
-the same list) combine with **OR** logic. This is the most common pattern for rule builders of this shape, but it is
-the single biggest assumption in this plan — **Test Case #C-COMPOSITE-01 below exists specifically to confirm or
-disprove it**, and if it's wrong most of the composite section needs re-priority, not re-design.
+- **Location:** Config → Automation → Guardrails (sibling pages: *Automation Level*, *Rules*, *Workflows* — so
+  "Guardrails" and "Rules" are apparently two distinct features; this plan covers Guardrails only).
+- **No multi-rule builder.** There's a single **config version** (e.g. `YP-15DECEMBER-174421`), shown with a **Draft**
+  badge, a **Deploy** button, and a **"⋮" menu**. This is a versioned/draft-then-deploy config, not CRUD over many
+  named rules — closer to a feature-flag or config-as-code pattern than a rules engine.
+- **Page description:** *"Control AI handoffs by setting deterministic rules with attributes and data, or natural
+  language guidance."* This implies a second, natural-language configuration mode may exist elsewhere on this page or
+  a related one — **[OPEN QUESTION]**, not covered below since it wasn't visible in the screenshot.
+- **The action all four fields drive is "unassign the conversation"** — i.e. hand the conversation off from the AI
+  back to a human. This is a meaningfully different mental model from "audit/flag," and it reframes the whole
+  feature as a **handoff-trigger config**, not a passive audit log.
+- **Each field is independently sufficient — likely OR across fields, not AND.** The copy for each field reads
+  "The AI will unassign the conversation if [that field] contains any of these [values]," stated independently per
+  field with no "and" language tying them together. This **directly overturns my original AND-composite assumption**
+  from the first draft. Test case **C-LOGIC-01** below exists specifically to confirm this against the real product,
+  since it's still inferred from copy, not observed behavior.
+- **Matching is plain substring "contains," with no format validation.** Proven by real saved data in the
+  screenshot: the email-patterns field contains `noreply` and `Gamer @ .com` — neither is a valid email address, yet
+  both are saved values. So this field does **not** validate email syntax; it's a bare substring match against the
+  sender's address. This overturns my original EP-05 ("invalid email rejected") test case entirely — that behavior
+  is not just unconfirmed, it's now confirmed *not* to be the case.
+- **Input mechanic:** each field is a chip/tag list. Type text into an input, press **Enter**, and it becomes a
+  removable chip (✕ button). Confirmed directly from the empty "Words in Assistant's Reply" field's placeholder:
+  *"Add a word (e.g., 'paperwork') and press Enter."*
+- **The four fields, verbatim:**
 
-**[ASSUMPTION]** Rules can be created, edited, enabled/disabled, and deleted, and there is some list/table view to
-manage them.
+  | Field label | Behavior copy | Example saved values |
+  |---|---|---|
+  | Emails patterns to unassign | "...if the sender's email address contains any of these patterns." | `newsletters@email.crosswalk.com`, `hey@hey.hey`, `Gamer @ .com`, `noreply` |
+  | Subjects | "...if the subject line contains any of these keywords." | `lawyer` |
+  | Words in User Message | "...if the user message contains any of these words." | `qwerty`, `bonus`, `banana` |
+  | Words in Assistant's Reply | "Unassigns the conversation if the AI agent generated reply contains any of these words." | *(empty in screenshot)* |
+
+### Still open — not visible in the one screenshot I have
+
+- **[OPEN QUESTION]** Exact Draft → Deploy semantics: does adding/removing a chip auto-save to the Draft immediately,
+  or is there an unsaved-changes state? Does Deploy apply instantly, and is there a rollback/previous-version view
+  (the URL's `?version=` param and the "⋮" menu both suggest yes)?
+  Does Deploy instantly? Is there a rollback/previous-version view (the URL's `?version=` param and the "⋮" menu both
+  suggest yes)?
+- **[OPEN QUESTION]** Case sensitivity of the "contains" match, and whether it's true raw substring (so a user-message
+  word list entry `"cat"` would match inside `"category"`) or has some hidden word-boundary logic. The UI copy just
+  says "contains," which reads as literal substring — this plan tests against that literal reading and flags it as
+  the thing to double check live.
+- **[OPEN QUESTION]** Whether empty fields are allowed at Deploy time, any max chip count, duplicate-chip handling,
+  and whether the small diamond/sparkle icon next to Deploy does anything (AI-assisted rule suggestion? diff view?).
 
 ---
 
@@ -51,76 +83,103 @@ Priority key used below: **P0** = blocks release if broken, **P1** = high value,
 
 ---
 
-## 2. Field-Level Test Case Matrix
+## 2. Chip/Tag UI Mechanics (applies identically to all four fields)
 
-### 2.1 Email Patterns
-
-| ID | Test Case | Priority |
-|---|---|---|
-| EP-01 | Exact email address matches an automation from/to that exact address | P0 |
-| EP-02 | Wildcard domain pattern (e.g. `*@notch.dev`) matches any sender on that domain | P0 |
-| EP-03 | Wildcard pattern does **not** match a similar-but-different domain (e.g. `*@notch.dev` vs `notch.devil.com`) | P0 |
-| EP-04 | Matching is case-insensitive (`User@Notch.dev` matches `user@notch.dev`) | P1 |
-| EP-05 | Invalid email syntax is rejected on save with a clear error, not silently accepted | P0 |
-| EP-06 | Multiple email patterns in one rule combine as OR (any one match fires the rule) | P0 |
-| EP-07 | Leading/trailing whitespace in the pattern is trimmed or explicitly rejected (not silently non-matching) | P1 |
-| EP-08 | Subdomain handling: does `*@notch.dev` match `user@mail.notch.dev`? Behavior should be defined and tested either way | P1 |
-| EP-09 | Internationalized/unicode local-part or domain (e.g. `user@münchen.example`) | P2 |
-| EP-10 | Duplicate pattern across two different rules — confirm both rules still evaluate independently | P1 |
-| EP-11 | Extremely long pattern string (e.g. 5,000 chars) — save behavior and any max-length enforcement | P2 |
-| EP-12 | Empty email-pattern field with other fields populated — confirm field is correctly treated as "not part of the match condition," not "matches everything" or "matches nothing" | P0 |
-
-### 2.2 Subject
+Since all four fields share one input pattern (type → Enter → chip → ✕ to remove), these are written once and
+should be run against each of the four fields rather than four times over:
 
 | ID | Test Case | Priority |
 |---|---|---|
-| SU-01 | Exact subject string match | P0 |
-| SU-02 | Partial/"contains" match, if supported — confirm which mode is default | P0 |
-| SU-03 | Case sensitivity behavior is defined and consistent with documented/expected behavior | P1 |
-| SU-04 | Special characters (quotes, emoji, non-Latin script) in subject match correctly | P1 |
-| SU-05 | Empty subject field is treated as "no constraint," not as "match empty subjects only" | P0 |
-| SU-06 | Leading/trailing/internal whitespace differences don't break an otherwise-correct match | P2 |
-| SU-07 | Regex/wildcard subject pattern (if supported) — valid pattern matches; invalid pattern rejected at save | P1 |
+| CHIP-01 | Typing a value and pressing Enter adds it as a chip and clears the input | P0 |
+| CHIP-02 | Clicking a chip's ✕ removes it immediately | P0 |
+| CHIP-03 | Adding the same value twice — confirm whether it's silently deduped, rejected with a message, or allowed as a literal duplicate chip | P1 |
+| CHIP-04 | Submitting an empty string (Enter with no text) does not create a blank chip | P1 |
+| CHIP-05 | A value that is only whitespace does not create a blank/invisible chip | P1 |
+| CHIP-06 | Leading/trailing whitespace on an otherwise valid value is trimmed before saving as a chip | P2 |
+| CHIP-07 | A very long value (e.g. 500+ chars) — confirm truncation/limit/scroll behavior rather than broken layout | P2 |
+| CHIP-08 | Keyboard-only flow: tab into the input, type, Enter, tab to the new chip's ✕, activate with Enter/Space (accessibility) | P1 |
+| CHIP-09 | Pasting a comma or newline-separated block of text — confirm whether it's split into multiple chips or added as one literal chip (screenshot doesn't show a bulk-add affordance, so single-chip-per-paste is the current best guess) | P2 |
 
-### 2.3 Words in User Message
+## 3. Field-Level Test Case Matrix
 
-| ID | Test Case | Priority |
-|---|---|---|
-| UM-01 | Single keyword present in user message triggers the rule | P0 |
-| UM-02 | Multiple keywords combine as OR — any one present is sufficient | P0 |
-| UM-03 | Word-boundary correctness: a listed word like "cat" does not falsely match inside "category" (unless substring matching is the documented, intended behavior) | P0 |
-| UM-04 | Case-insensitive matching ("Refund" list word matches "I want a refund") | P1 |
-| UM-05 | Punctuation adjacent to the word doesn't prevent a match ("refund." / "refund," / "(refund)") | P1 |
-| UM-06 | Bulk-add / paste a list of words works and each entry is matched independently | P1 |
-| UM-07 | Duplicate word entries in the same list are handled gracefully (de-duped or harmlessly redundant) | P2 |
-| UM-08 | Empty word list is treated as "no constraint from this field" | P0 |
-| UM-09 | Non-English / unicode words match correctly | P2 |
-| UM-10 | A word that only appears in the **assistant's** reply does *not* incorrectly trigger the user-message field | P0 |
+All four fields use plain **substring "contains"** matching per the on-page copy, confirmed by real data in the
+screenshot (`noreply` and `Gamer @ .com` are saved values in a field labeled "Emails patterns," despite not being
+valid email syntax — proving there's no format validation, just text containment). Test cases below test *that*
+behavior, not a hypothetical wildcard/regex/exact-match engine.
 
-### 2.4 Words in Assistant's Reply
+### 3.1 Emails patterns to unassign
 
 | ID | Test Case | Priority |
 |---|---|---|
-| AR-01 through AR-09 | Mirror UM-01–UM-09 against the assistant-reply field | P0–P2 (mirrors above) |
-| AR-10 | A word appearing only in the **user's** message does not incorrectly trigger the assistant-reply field (independence from UM-10) | P0 |
-| AR-11 | Matching ignores markdown/HTML formatting artifacts in the assistant's rendered reply (e.g. a bolded `**refund**` still matches "refund") | P1 |
+| EP-01 | A pattern like `@notch.dev` is accepted and saved as a chip, with no email-format validation required (matches observed `noreply` / `Gamer @ .com` behavior) | P0 |
+| EP-02 | A saved pattern matches when it appears anywhere within the sender's email address (true substring, e.g. `crosswalk.com` matches `newsletters@email.crosswalk.com`) | P0 |
+| EP-03 | A pattern does **not** trigger unassignment when it is absent from the sender's address | P0 |
+| EP-04 | Case sensitivity of the contains-match is confirmed either way (`NOREPLY` vs `noreply`) | P1 |
+| EP-05 | Multiple patterns in the field are OR'd — any single pattern matching is sufficient to unassign | P0 |
+| EP-06 | Removing a chip (✕) stops that pattern from triggering unassignment on the next message | P0 |
+| EP-07 | An empty patterns field means this category never triggers unassignment (not "always matches") | P0 |
+| EP-08 | Chip mechanics (see Section 2) all pass for this field specifically | P1 |
+
+### 3.2 Subjects
+
+| ID | Test Case | Priority |
+|---|---|---|
+| SU-01 | A keyword like `lawyer` triggers unassignment when the subject line contains it anywhere, not just as a whole word (per "contains" copy) | P0 |
+| SU-02 | A keyword absent from the subject does not trigger unassignment | P0 |
+| SU-03 | Case sensitivity is confirmed either way (`Lawyer` vs `lawyer`) | P1 |
+| SU-04 | Special characters/unicode/emoji in a keyword are accepted and match correctly | P2 |
+| SU-05 | Empty subjects field means this category never triggers unassignment | P0 |
+| SU-06 | Chip mechanics (Section 2) pass for this field | P1 |
+
+### 3.3 Words in User Message
+
+| ID | Test Case | Priority |
+|---|---|---|
+| UM-01 | A saved word (e.g. `banana`) triggers unassignment when it appears anywhere in the user's message | P0 |
+| UM-02 | **Substring bleed-through**, given literal "contains" semantics: does the word `cat` incorrectly match inside `category`? This is the single highest-value test in this field, precisely because the confirmed behavior (plain substring) makes it a real risk, not a hypothetical | P0 |
+| UM-03 | Multiple words in the list are OR'd — any one present is sufficient | P0 |
+| UM-04 | Case sensitivity is confirmed either way | P1 |
+| UM-05 | Empty word list means this category never triggers unassignment | P0 |
+| UM-06 | A word appearing only in the **assistant's reply** does not incorrectly trigger this field (field independence) | P0 |
+| UM-07 | Chip mechanics (Section 2) pass for this field | P1 |
+
+### 3.4 Words in Assistant's Reply
+
+| ID | Test Case | Priority |
+|---|---|---|
+| AR-01–AR-05 | Mirror UM-01–UM-05 against the assistant-reply field and its own saved words | P0–P1 |
+| AR-06 | A word appearing only in the **user's message** does not incorrectly trigger this field (independence, mirrors UM-06) | P0 |
+| AR-07 | Matching isn't broken by markdown/formatting in the AI's rendered reply (e.g. a bolded `**paperwork**` still contains "paperwork") | P1 |
+| AR-08 | Chip mechanics (Section 2) pass for this field | P1 |
 
 ---
 
-## 3. Composite / Cross-Field Test Cases
+## 4. Cross-Field Logic Test Cases
 
-These validate the interaction between fields — arguably the highest-risk area, since it's where the
-**[ASSUMPTION]** in Section 0 about AND/OR logic gets proven right or wrong.
+The on-page copy states each field's trigger independently ("The AI will unassign the conversation if [field]
+contains any of these..."), with no "and" language linking fields — the working model is **OR across fields**, a
+reversal of my original AND assumption. This section exists to lock that in against real behavior.
 
 | ID | Test Case | Priority |
 |---|---|---|
-| C-COMPOSITE-01 | A rule with both an email pattern and a user-message word: confirm whether **both** must match (AND) or **either** (OR), and lock that behavior into a test | P0 |
-| C-COMPOSITE-02 | A rule with all four fields populated fires only when every configured field's condition is met (assuming AND) | P0 |
-| C-COMPOSITE-03 | Disabling a rule stops it from firing on new automations without deleting its configuration | P0 |
-| C-COMPOSITE-04 | Editing a live rule's word list takes effect on the next automation run without requiring a re-save/republish step elsewhere | P1 |
-| C-COMPOSITE-05 | Deleting a rule stops future triggers but does not retroactively remove/alter past audit log entries | P1 |
-| C-COMPOSITE-06 | Two overlapping rules both fire independently on the same automation event (no "first match wins" swallowing) — or, if the product intentionally uses first-match-wins, that priority order is deterministic and testable | P1 |
-| C-COMPOSITE-07 | Saving a rule with all fields empty is rejected (a rule that matches everything is very likely not intended) | P0 |
+| C-LOGIC-01 | A conversation whose email matches **only** the email-patterns field (subject/words don't match anything configured) still gets unassigned — confirms fields are OR'd, not AND'd | P0 |
+| C-LOGIC-02 | A conversation matching **all four** fields simultaneously gets unassigned exactly once (not four redundant unassign actions/events) | P1 |
+| C-LOGIC-03 | A conversation matching **none** of the four fields is not unassigned | P0 |
+| C-LOGIC-04 | Editing one field (e.g. removing the only chip in Subjects) doesn't affect the independent triggering of the other three fields | P1 |
+
+## 5. Draft / Deploy Lifecycle
+
+This is new territory the screenshot surfaced that a simple "rule builder" model would have missed entirely.
+
+| ID | Test Case | Priority |
+|---|---|---|
+| DD-01 | Adding/removing a chip while in Draft persists across a page reload (confirms it autosaves to the draft, vs. being lost) | P0 |
+| DD-02 | The Draft badge accurately reflects that changes are **not yet live** — verified against whatever live/production indicator exists (needs product access to confirm what that indicator is) | P0 |
+| DD-03 | Clicking **Deploy** promotes the current draft to the active/live config | P0 |
+| DD-04 | After Deploy, making a further chip edit creates a new Draft rather than silently mutating the already-deployed version | P1 |
+| DD-05 | The "⋮" menu next to the version badge — enumerate its actual options (rename, discard draft, view history, duplicate) once accessible, and write cases per option | P2 — **[OPEN QUESTION]**, contents unknown from the screenshot |
+| DD-06 | The `?version=` URL param can be used to view a prior deployed version's config as read-only or editable — confirm which, since this affects whether direct-navigation tests can safely run in parallel | P2 — **[OPEN QUESTION]** |
+| DD-07 | Two people editing the same Draft concurrently — last-write-wins vs. conflict warning (worth a quick manual check even if not automated) | P2 |
 
 ---
 
@@ -148,18 +207,20 @@ These validate the interaction between fields — arguably the highest-risk area
 
 ---
 
-## 5. Implementation Notes
+## 6. Implementation Notes
 
-- **Stack chosen:** Playwright + TypeScript. It's the current industry-standard for browser E2E, has strong
-  auto-waiting (fewer flaky tests), and reads cleanly for an interview presentation. Happy to swap to Cypress,
-  Selenium/Python, or pure API tests (Postman/pytest+requests) if that better matches your stack — say the word and
-  I'll port it.
-- **What's actually implemented** (per the assignment, not everything needs to be): a representative slice covering
-  P0 cases across all four fields, plus one composite case, structured with a Page Object so the rest of the matrix
-  can be filled in quickly. Every implemented test is traceable to its ID above via a comment.
-- **Selectors are placeholders.** Since I can't see the real DOM, `GuardrailsPage.ts` uses `data-testid`-style
-  selectors with a clearly marked `// ASSUMED SELECTOR` comment on each one. Swap these for the real ones (or send me
-  a screenshot / the rendered HTML and I'll do it) and the suite runs as-is.
-- **Not implemented, by design:** matching-logic tests that require a live backend to actually run an automation
-  end-to-end (Section 2 "trigger" assertions) are written as *skipped* specs with the assertion logic ready to
-  un-skip once there's a test environment with a seeded automation to fire against.
+- **Stack chosen:** Playwright + TypeScript — strong auto-waiting (fewer flaky tests), and reads cleanly for an
+  interview presentation. Happy to swap to Cypress, Selenium/Python, or pure API tests if that better matches your
+  stack.
+- **What's actually implemented** (per the assignment, not everything needs to be): the chip UI mechanics (Section 2)
+  against all four fields, a representative slice of the field-level P0 cases, and the OR-across-fields logic check.
+  Draft/Deploy lifecycle tests are stubbed but marked as needing product access to confirm the live/production
+  indicator before they can assert anything meaningful.
+- **Selectors are grounded in the real screenshot** — exact field labels, the confirmed placeholder text, and the
+  visible "Deploy" button text — rather than invented `data-testid`s. What's still guessed is the *DOM nesting*
+  (which container wraps which heading/input/chip), since a screenshot doesn't reveal markup structure. Each such
+  guess is commented `// ASSUMED DOM STRUCTURE`. Sharing the rendered HTML (or DevTools → "Copy → Copy element") for
+  one field would let me lock the rest in exactly.
+- **Not implemented, by design:** end-to-end "does unassignment actually happen" tests (C-LOGIC-*) require a live
+  conversation/automation pipeline to fire test messages through — written as *skipped* specs with the plan and
+  assertions ready to un-skip once there's a seeded test conversation to run them against.
