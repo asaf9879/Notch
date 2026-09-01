@@ -7,7 +7,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": ["@playwright/test"]
+    "types": ["@playwright/test", "node"]
   },
   "include": ["tests/**/*.ts", "playwright.config.ts"]
 }
